@@ -3,7 +3,13 @@
  * @Description: 
 -->
 <template>
-  <Modal v-model="viewInfo" width="600" draggable>
+  <Modal
+    v-model="viewInfo"
+    width="600"
+    draggable
+    @on-cancel="clearForm"
+    @on-ok="clearForm"
+  >
     <p slot="header" style="text-align:center">
       <span>查看详细信息</span>
     </p>
@@ -39,7 +45,7 @@ export default {
   methods: {
     setModalData(value) {
       try {
-        console.log("value--------", value);
+        // console.log("value--------", value);
         let points = value.point;
         let pointsStr = points.join(",\n");
         this.points = pointsStr;
@@ -49,7 +55,10 @@ export default {
             type: value.typeName,
             fLaneNum: value.fLaneNum,
             processor_ids: value.processor_ids.join(","),
-            successor_ids: value.successor_ids.join(",")
+            successor_ids: value.successor_ids.join(","),
+            usage: value.usage,
+            spl: value.spl,
+            dis: value.dis
           };
         } else if (value.typeName == "YHlane") {
           this.formItem = {
@@ -58,6 +67,8 @@ export default {
             segmentId: value.segmentId,
             associated_stoplineId: value.associated_stoplineId,
             is_on_route: value.is_on_route,
+            length: value.length,
+            segment_distance: value.segment_distance,
             quality_score: value.quality_score,
             segment_crossing: value.segment_crossing,
             segment_score: value.segment_score,
@@ -71,6 +82,7 @@ export default {
             niId: value.niId,
             type: value.typeName,
             segmentId: value.segmentId,
+            segment_distance: value.segment_distance,
             associated_stoplineId: value.associated_stoplineId,
             predecessor_segment_ids: value.predecessor_segment_ids.join(","),
             successor_segment_ids: value.successor_segment_ids.join(",")
@@ -85,6 +97,11 @@ export default {
       } catch (err) {
         console.log(err, "err---setModalData");
       }
+    },
+    clearForm() {
+      this.viewInfo = false;
+      this.formItem = {};
+      this.points = "";
     }
   }
 };

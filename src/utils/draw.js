@@ -1,11 +1,3 @@
-/*
- * @LastEditTime: 2024-10-24 15:04:43
- * @Description:
- */
-/*
- * @LastEditTime: 2024-10-23 13:37:20
- * @Description:
- */
 import * as Cesium from "Cesium";
 
 function drawMap(el) {
@@ -14,19 +6,16 @@ function drawMap(el) {
 
   //声明cesium实例
   let viewer = new Cesium.Viewer(el, {
-    terrainProvider: Cesium.createWorldTerrain(),
-
     baseLayerPicker: false, //选择图层
     sceneModePicker: false, //选择模式
     geocoder: false, //搜索
     homeButton: false, //复位
     navigationHelpButton: false, //导航帮助
     timeline: false, //时间线
-    // animation: false, //动画
+    animation: false, //动画
     infoBox: false, //信息框
     selectionIndicator: false, // 绿色的定位框
     // 添加基础地图
-    // imageryProvider: undefined
     imageryProvider: new Cesium.UrlTemplateImageryProvider({
       url:
         "http://webst01.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}", //高德地图(卫片)
@@ -70,7 +59,8 @@ function addPrimitive(instances, color, type) {
     geometryInstances: instances,
     appearance: new Cesium.PolylineMaterialAppearance({
       material: material
-    })
+    }),
+    releaseGeometryInstances: false // 确保不在删除时释放几何实例
   });
   return primitive;
 }

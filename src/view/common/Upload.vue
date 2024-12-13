@@ -22,6 +22,7 @@
   </div>
 </template>
 <script>
+import BigNumber from "bignumber.js";
 export default {
   props: {
     fileType: {
@@ -44,8 +45,8 @@ export default {
   },
   methods: {
     closeFile() {
-      console.log(this.fileType, 'close---');
-      
+      console.log(this.fileType, "close---");
+
       this.$bus.$emit("clearFile", {
         key: this.fileType,
         fileName: this.fileName
@@ -53,9 +54,11 @@ export default {
     },
     onChange() {
       const file = this.$refs.file.files[0];
+
       //解决上传同名文件不触发的问题
       this.$refs.file.value = "";
       if (!file) return;
+      console.log(file, "filefilefilefilefile");
 
       if (file.name.includes(this.fileType)) {
         this.fileName = file.name;
@@ -70,15 +73,19 @@ export default {
           xmlHttp.send(null);
           try {
             let xmlDoc = JSON.parse(xmlHttp.responseText);
+            console.log(xmlDoc, "xmlDoc");
+
+            this.onvertToBigNumber(xmlDoc.result);
             that.uploadData = xmlDoc.result;
-            console.log(that.uploadData, 'that.uploadData');
-            
+
             let datas = {
               code: 200,
               data: xmlDoc,
               msg: "success",
               fileName: file.name
             };
+            console.log(that.uploadData, "that.uploadData");
+
             that.$bus.$emit("JSONData", datas);
           } catch (e) {
             that.$Spin.hide();
@@ -87,6 +94,23 @@ export default {
         };
       } else {
         this.$Message.warning("请上传相关的导航文件！");
+      }
+    },
+    onvertToBigNumber(obj) {
+      if (typeof obj === "object" && obj !== null) {
+        console.log(obj, "obj");
+
+        for (let key in obj) {
+          if (obj.hasOwnProperty(key)) {
+            if (typeof obj[key] === "number") {
+              // 如果是数字，使用 BigNumber 转换
+              obj[key] = new BigNumber(obj[key]);
+            } else if (typeof obj[key] === "object") {
+              // 如果是对象或数组，递归处理
+              this.convertToBigNumber(obj[key]);
+            }
+          }
+        }
       }
     }
   }

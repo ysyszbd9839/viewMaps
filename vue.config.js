@@ -40,10 +40,9 @@ module.exports = {
         {
           test: /\.js$/,
           use: {
-            loader: "@open-wc/webpack-import-meta-loader"
-          }
-        }
-      ],
+            loader: '@open-wc/webpack-import-meta-loader',
+          },
+        },],
       // cesium 3 不加这个配置会报require引入警告
       unknownContextCritical: false
     },
@@ -76,10 +75,12 @@ module.exports = {
           from: path.join(cesiumSource, "ThirdParty"),
           to: "ThirdParty"
         }
-      ])
+      ]),
       // new webpack.ProvidePlugin({
       //   Cesium: ['cesium/Cesium'] // Cesium对象实例可在每个js中使用而无须import
       // })
     ]
   }
 };
+
+

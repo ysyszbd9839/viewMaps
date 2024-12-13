@@ -124,12 +124,14 @@ export default {
   right: 20px;
   display: flex;
 }
+
 .tools-box {
   position: fixed;
   top: 126px;
-  right: 46px;
+  right: 15px;
   display: flex;
 }
+
 .select-data {
   position: fixed;
   top: 60px;
@@ -138,7 +140,7 @@ export default {
 
 .card-list {
   position: fixed !important;
-  top: 125px;
+  top: 165px;
   right: 15px;
 }
 

@@ -1,5 +1,5 @@
 <!--
- * @LastEditTime: 2024-10-24 19:54:52
+ * @LastEditTime: 2024-10-28 10:00:08
  * @Description: 
 -->
 <template>
@@ -8,19 +8,17 @@
 
 <script>
 import Draw from "@/utils/draw.js";
+import Rang from "@/utils/rang.js";
 import reductionBias from "@/utils/reductionBias.js";
 import common from "@/utils/common.js";
 import * as Cesium from "Cesium";
 import axios from "axios";
-import Rang from "@/utils/rang.js";
+import BigNumber from "bignumber.js";
 
 let viewer = null,
   selectRoad = null,
   pointsDataSource = null,
-  rangLineEntity = null,
-  rangLineMoveEntity = null,
   lanePrimitive = null,
-  lanePrimitiveRang = null,
   markingPrimitive = null,
   stopLinePrimitive = null,
   zebracrossingsPrimitive = null;
@@ -55,37 +53,56 @@ export default {
       lon: "",
       lat: "",
       isMovePosition: false,
-      distanceMeasure: null,
       rangChecked: "null",
-      Rang: null,
-      rangPoints: [],
-      rangMovePoints: [],
-      lineRang: [],
-      rangNum: 0,
-      circleRang: null,
-      circleRangArr: []
+      rangData: {
+        lineEntityArrs: [],
+        lineEntity: null,
+        circleEntityArrs: [],
+        circleEntityArr: [],
+        mapIconArrs: [],
+        mapIconArr: [],
+        delIconArrs: [],
+        delIconArr: [],
+        pointsDataArrs: [],
+        pointsDataArr: [],
+        lineMovingData: [],
+        lineMovingEntity: null,
+        textMovingEntity: null,
+        rangNum: 0,
+        currentNum: -1
+      },
+      routeData: {
+        // 路线规划
+        checked: "null"
+      },
+      stopInstances: [],
+      zabraInstances: []
     };
   },
 
   mounted() {
     this.initMap();
-
+    // 测距
     this.$bus.$on("rangFun", value => {
-      console.log("rangFun--", value);
       this.rangChecked = value.rangChecked;
+    });
+    // 路线规划
+    this.$bus.$on("handleRoute", value => {
+      this.routeData.checked = value.routeChecked;
     });
     this.$bus.$on("clearFile", value => {
       console.log(value, "value---接收文件情理信号");
     });
     this.$bus.$on("JSONData", value => {
-      console.log("SD数据", value);
       if (value.fileName.includes("SD")) {
         //这是SD导航数据
         SDList = value.data.result;
+        console.log("SD数据", SDList);
         let color = null,
           width = 0,
           colorValue = "";
         SDList.forEach((item, index) => {
+          item.niId = new BigNumber(item.niId);
           let pathInfo = {
             title: "导航" + Number(index + 1) + "info",
             expand: false,
@@ -97,6 +114,8 @@ export default {
           let idx = treeList.findIndex(obj => obj.title === pathInfo.title);
           // 如果对象不存在，则将其添加到数组中
           if (idx === -1) {
+            console.log(pathInfo, "pathInfo");
+
             treeList.push(pathInfo);
             switch (index) {
               case 0:
@@ -114,6 +133,23 @@ export default {
         });
         this.$bus.$emit("treeList", treeList);
       } else {
+        // 清除掉上一个文件绘制的停止线和斑马线
+        if (this.stopInstances.length > 0) {
+          this.stopInstances.forEach(item => {
+            viewer.scene.primitives.remove(item);
+          });
+          this.stopInstances = [];
+          viewer.scene.primitives.remove(stopLinePrimitive);
+          stopLinePrimitive = null;
+        }
+        if (this.zabraInstances.length > 0) {
+          this.zabraInstances.forEach(item => {
+            viewer.scene.primitives.remove(item);
+          });
+          this.zabraInstances = [];
+          viewer.scene.primitives.remove(zebracrossingsPrimitive);
+          zebracrossingsPrimitive = null;
+        }
         origin_utm_x = value.data.origin_utm_x;
         origin_utm_y = value.data.origin_utm_y;
         segmentList = value.data.segments;
@@ -139,7 +175,6 @@ export default {
 
         //绘制停止线
         let stoplines = value.data.stoplines;
-        let stopInstances = [];
         for (let i = 0; i < stoplines.length; i++) {
           let line = stoplines[i].geometry;
           let wgs84Line = this.updateYHPoint(line);
@@ -157,10 +192,10 @@ export default {
             property.point,
             5
           );
-          stopInstances.push(instance);
+          this.stopInstances.push(instance);
         }
         stopLinePrimitive = Draw.addPrimitive(
-          stopInstances,
+          this.stopInstances,
           Cesium.Color.MAGENTA.withAlpha(1),
           "PolylineOutline"
         );
@@ -168,7 +203,6 @@ export default {
 
         //绘制斑马线
         let zebracrossings = value.data.zebracrossings;
-        let zabraInstances = [];
         for (let i = 0; i < zebracrossings.length; i++) {
           let line = zebracrossings[i].geometry;
           let wgs84Line = this.updateYHPoint(line);
@@ -186,10 +220,10 @@ export default {
             property.point,
             5
           );
-          zabraInstances.push(instance);
+          this.zabraInstances.push(instance);
         }
         zebracrossingsPrimitive = Draw.addPrimitive(
-          zabraInstances,
+          this.zabraInstances,
           Cesium.Color.TURQUOISE.withAlpha(1),
           "PolylineOutline"
         );
@@ -245,7 +279,8 @@ export default {
                   segmentList[i].successor_segment_ids,
                   segmentList[i].associated_stoplineId,
                   segmentList[i].crossing,
-                  segmentList[i].quality_score
+                  segmentList[i].quality_score,
+                  segmentList[i].length
                 );
                 console.log(property, "property");
 
@@ -311,7 +346,8 @@ export default {
                     item.successor_segment_ids,
                     item.associated_stoplineId,
                     item.crossing,
-                    item.quality_score
+                    item.quality_score,
+                    item.length
                   );
                   if (property) {
                     property.type = "yhLaneinfo";
@@ -333,7 +369,7 @@ export default {
                 return item.niId == value;
               });
               if (searchData) {
-                let pointList = this.updatePoint(searchData);
+                let pointList = this.updatePoint(searchData, "searchId--");
                 let property = this.getProperty(searchData, 0);
                 this.setPolyLineStyle(property, false);
                 this.$bus.$emit("polyData", property);
@@ -355,23 +391,65 @@ export default {
   },
 
   methods: {
+    // 路线规划
+    handleRoute() {},
+    // 测距用来获取坐标
+    getPosition(position) {
+      return viewer.camera.pickEllipsoid(
+        position,
+        viewer.scene.globe.ellipsoid
+      );
+    },
+    overRang() {
+      if (this.rangData.pointsDataArr.length > 1) {
+        this.rangData.circleEntityArr[
+          this.rangData.circleEntityArr.length - 1
+        ].label.text = `总长：${this.rangData.rangNum.toFixed(4)}米`;
+        this.rangData.mapIconArr[
+          this.rangData.mapIconArr.length - 1
+        ].billboard.image = "static/map_end.png";
+        this.rangData.delIconArr[
+          this.rangData.delIconArr.length - 1
+        ].billboard.image = "static/clear.png";
+        this.rangData.pointsDataArrs.push(this.rangData.pointsDataArr);
+        this.rangData.lineEntityArrs.push(this.rangData.lineEntity);
+        this.rangData.circleEntityArrs.push(this.rangData.circleEntityArr);
+        this.rangData.mapIconArrs.push(this.rangData.mapIconArr);
+        this.rangData.delIconArrs.push(this.rangData.delIconArr);
+      } else {
+        this.rangData.circleEntityArr.forEach(item => {
+          viewer.entities.remove(item);
+        });
+        this.rangData.mapIconArr.forEach(item => {
+          viewer.entities.remove(item);
+        });
+        this.rangData.delIconArr.forEach(item => {
+          viewer.entities.remove(item);
+        });
+      }
+
+      viewer.entities.remove(this.rangData.lineMovingEntity);
+      viewer.entities.remove(this.rangData.textMovingEntity);
+      this.rangData.mapIconArr = [];
+      this.rangData.delIconArr = [];
+      this.rangData.textMovingEntity = null;
+      this.rangData.lineMovingEntity = null;
+      this.rangData.circleEntityArr = [];
+      this.rangData.lineMovingData = [];
+      this.rangData.pointsDataArr = [];
+      this.rangData.rangNum = 0;
+      this.rangData.lineEntity = null;
+    },
+    delRang() {},
+
     initMap() {
       viewer = Draw.drawMap("cesiumContainer");
       window.viewer = viewer;
-      // 启用倾斜功能
-      viewer.scene.screenSpaceCameraController.enableTilt = true;
-      viewer.scene.camera.moveEnd.addEventListener(function() {
-        const pitch = viewer.camera.pitch; // 获取当前俯仰角
-        console.log("Current Pitch:", pitch);
-      });
-
       pointsDataSource = viewer.scene.primitives.add(
         new Cesium.PointPrimitiveCollection()
       );
-      viewer.scene.globe.depthTestAgainstTerrain = false;
       this.getData();
       this.addClickEvent();
-      this.Rang = new Rang(viewer);
     },
 
     getData() {
@@ -463,7 +541,7 @@ export default {
     },
     handleYhSegm() {
       let arr = [];
-      segmentList.forEach(item => {
+      segmentList.forEach((item, index) => {
         if (item.quality_score > 0 && item.lanes.length) {
           let property = this.setYHProperty(
             item.lanes[0],
@@ -473,14 +551,16 @@ export default {
             item.successor_segment_ids,
             item.associated_stoplineId,
             item.crossing,
-            item.quality_score
+            item.quality_score,
+            item.length
           );
 
           arr.push({
             title: item.segmentId,
             checked: true,
             selected: false,
-            polyInfo: property
+            polyInfo: property,
+            key: `${item.title}-${index}`
           });
         }
       });
@@ -525,7 +605,8 @@ export default {
           laneTree,
           segmentList[i].associated_stoplineId,
           segmentList[i].crossing,
-          segmentList[i].quality_score
+          segmentList[i].quality_score,
+          segmentList[i].distance
         );
       }
       if (type == "YHlane") {
@@ -555,7 +636,8 @@ export default {
       treeList,
       stoplineId,
       segmCrossing = "",
-      segmScore = ""
+      segmScore = "",
+      distance = ""
     ) {
       for (let i = 0; i < datalist.length; i++) {
         let property = this.setYHProperty(
@@ -566,7 +648,8 @@ export default {
           successorSegmentIds,
           stoplineId,
           segmCrossing,
-          segmScore
+          segmScore,
+          distance
         );
         if (property) {
           let instance = Draw.addInstance(
@@ -596,7 +679,8 @@ export default {
       successorSegmentIds,
       stoplineId,
       segmCrossing = "",
-      segmScore = ""
+      segmScore = "",
+      distance = ""
     ) {
       let line = item.points;
       let wgs84Line = this.updateYHPoint(line);
@@ -613,14 +697,16 @@ export default {
         predecessor_segment_ids: predecessorSegmentIds,
         successor_segment_ids: successorSegmentIds,
         predecessor_lane_ids: item.predecessor_lane_ids || [],
-        successor_lane_ids: item.successor_lane_ids || []
+        successor_lane_ids: item.successor_lane_ids || [],
+        segment_distance: distance
       };
       if (type == "YHlane") {
         property = {
           ...property,
           quality_score: item.quality_score,
           segment_crossing: segmCrossing,
-          segment_score: segmScore
+          segment_score: segmScore,
+          length: item.length
         };
       }
 
@@ -633,7 +719,8 @@ export default {
         linkinstances = [],
         posInfoinstances = [];
       for (let i = 0; i < segm.length; i++) {
-        let pointList = this.updatePoint(segm[i]);
+        let pointList = this.updatePoint(segm[i], "drawSDPolyline--");
+        // console.log(pointList, "segm--drawSDPolyline-pointList");
         let instance = Draw.addInstance(
           JSON.stringify(this.getProperty(segm[i], index)),
           pointList,
@@ -646,6 +733,8 @@ export default {
           inLinkInfos = inLinkInfos.filter(
             itemA => !segm.find(itemB => itemA.linkAttr.niId == itemB.niId)
           );
+          // console.error(inLinkInfos, "inLinkInfos======", inLinkInfos.length);
+
           this.addLinkPolyline(
             inLinkInfos,
             linkinstances,
@@ -659,6 +748,11 @@ export default {
           outLinkInfos = outLinkInfos.filter(
             itemA => !segm.find(itemB => itemA.linkAttr.niId == itemB.niId)
           ); //过滤掉和segm上面一样的id，避免重复显示
+          // console.error(
+          //   outLinkInfos,
+          //   "outLinkInfos======",
+          //   outLinkInfos.length
+          // );
           this.addLinkPolyline(
             outLinkInfos,
             linkinstances,
@@ -701,8 +795,8 @@ export default {
       if (inLinkInfos.length > 0) {
         for (let j = 0; j < inLinkInfos.length; j++) {
           let linkAttr = inLinkInfos[j].linkAttr;
-          if (linkAttr) {
-            let inLinkPoint = this.updatePoint(linkAttr);
+          if (linkAttr && linkAttr.shPos && linkAttr.shPos.length) {
+            let inLinkPoint = this.updatePoint(linkAttr, "addLinkPolyline--1");
             let property = {
               typeName: "link",
               point: inLinkPoint,
@@ -728,7 +822,10 @@ export default {
               itemA => !segm.find(itemB => itemA.niId == itemB.niId)
             );
             for (let i = 0; i < psInfos.length; i++) {
-              let inLinkPoint = this.updatePoint(psInfos[i]);
+              let inLinkPoint = this.updatePoint(
+                psInfos[i],
+                "addLinkPolyline--2"
+              );
               let property = {
                 typeName: "psInfo",
                 point: inLinkPoint,
@@ -760,7 +857,7 @@ export default {
       }
       data.route.segm.forEach(item => {
         let linkChildren = {
-          title: item.niId,
+          title: new BigNumber(item.niId),
           checked: checked,
           selected: false,
           polyInfo: this.getProperty(item, index)
@@ -772,28 +869,38 @@ export default {
 
     //获取property的值
     getProperty(item, index) {
+      // console.log(item, "item");
+
       let property = {
         typeName: "segm",
-        point: this.updatePoint(item),
-        niId: item.niId,
+        point: this.updatePoint(item, "getProperty--"),
+        niId: new BigNumber(item.niId),
         type: "导航" + Number(index + 1) + "info",
         fLaneNum: this.setfLaneNum(item),
         processor_ids: this.setCessorIds(item).processor_ids,
         successor_ids: this.setCessorIds(item).successor_ids,
         inLinkInfos: item.inLinkInfos,
-        outLinkInfos: item.outLinkInfos
+        outLinkInfos: item.outLinkInfos,
+        usage: item.usage,
+        spl: item.spl,
+        dis: item.dis
       };
       return property;
     },
 
     //更新点的坐标
-    updatePoint(item) {
-      let pointList = [];
-      item.shPos.forEach(pos => {
-        let point = pos.split(",");
-        pointList.push([Number(point[0]), Number(point[1])]);
-      });
-      return pointList;
+    updatePoint(item, type) {
+      try {
+        // console.log(item, "item", type);
+        let pointList = [];
+        item.shPos.forEach(pos => {
+          let point = pos.split(",");
+          pointList.push([Number(point[0]), Number(point[1])]);
+        });
+        return pointList;
+      } catch (err) {
+        console.log(err, "err-------updatePoint");
+      }
     },
 
     //更新视觉地图的坐标
@@ -894,189 +1001,249 @@ export default {
       this.setPolyLineStyle(this.selectProperty, true);
       this.drawPoint(this.selectProperty);
     },
-    addRangCircle(point, text, id) {
-      viewer.entities.add({
-        name: "_range",
-        id: "range_" + id,
-        position: point,
-        point: {
-          pixelSize: 0,
-          disableDepthTestDistance: 500
-        },
-        label: {
-          text: text,
-          font: "normal 18px SimHei",
-          fillColor: Cesium.Color.ORANGE, // 文本颜色
-          outlineWidth: 0, // 轮廓宽度
-          verticalOrigin: Cesium.VerticalOrigin.BOTTOM, // 圆点位置
-          horizontalOrigin: Cesium.HorizontalOrigin.LEFT, // 文本的位置
-          pixelOffset: new Cesium.Cartesian2(0, -10) // 文本偏移量，Cartesian2
-        }
-      });
-    },
+
     addClickEvent() {
       let handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
       //鼠标左击事件
       let that = this;
       handler.setInputAction(function(event) {
-        if (that.rangChecked != "null") {
-          const position = viewer.camera.pickEllipsoid(
-            event.position,
-            viewer.scene.globe.ellipsoid
-          );
-          if (that.rangChecked != "start") {
-            that.rangChecked = "start";
-            console.log(Rang, "rang=======");
-
-            Rang.startRang();
-          }
-          if (position) {
-            Rang.handleCurPoint(position);
-            // that.rangPoints.push(position);
-            if (that.rangChecked == "start") {
-              Rang.handleMovingPoint(position);
-              // that.rangMovePoints = [position, position];
-              if (!Rang.textMovingEntity) {
-                Rang.textMovingEntity = viewer.entities.add(
-                  Rang.drawTextRang(position, "")
+        try {
+          if (that.rangChecked != "null") {
+            if (that.rangChecked != "start") {
+              that.rangChecked = "start";
+              that.rangData.currentNum++;
+            }
+            const position = that.getPosition(event.position);
+            if (
+              position &&
+              that.rangChecked == "start" &&
+              that.rangData.currentNum >= 0
+            ) {
+              that.rangData.pointsDataArr.push(position);
+              that.rangData.lineMovingData = [position, position];
+              if (!that.rangData.textMovingEntity) {
+                that.rangData.textMovingEntity = viewer.entities.add(
+                  Rang.drawTextRang(position)
+                );
+                that.rangData.lineMovingEntity = viewer.entities.add(
+                  Rang.drawLine(
+                    `yh_rang_line_moving`,
+                    that.rangData.lineMovingArr
+                  )
                 );
               }
-              // if (!that.circleRang) {
-              //   that.circleRang = viewer.entities.add(
-              //     that.drawTextRang(position, "")
-              //   );
-              // }
-            }
-            let num = 0;
-            // 超过两个点可以开始计算距离了
-            if (Rang.pointsDataArr.length > 1) {
-              const prePoint =
-                Rang.pointsDataArr[Rang.pointsDataArr.length - 2];
-              const curPoint =
-                Rang.pointsDataArr[Rang.pointsDataArr.length - 1];
-              num = Rang.handleLineNum(curPoint, prePoint);
-            }
-            // if (that.rangPoints.length > 1) {
-            //   const prePoint = that.rangPoints[that.rangPoints.length - 2];
-            //   const curPoint = that.rangPoints[that.rangPoints.length - 1];
-            //   num = that.handleLineNum(curPoint, prePoint);
-            // }
-            if (Rang.lineEntityArrs.length == Rang.currentNum) {
-              Rang.lineEntity = Rang.updatePoints(); // 更新线条的位置
-            } else {
-              Rang.lineMovingEntity = viewer.entities.add(
-                Rang.drawLine(`yh_rang_line_moving`, Rang.lineMovingArr)
-              );
-              Rang.lineEntity = viewer.entities.add(
-                Rang.drawLine(`yh_rang_line${Rang.currentNum}`, Rang.pointsArr)
-              );
-              Rang.lineEntityArrs.push(Rang.lineEntity);
-            }
-
-            // if (rangLineEntity) {
-            //   rangLineEntity.polyline.positions = new Cesium.CallbackProperty(
-            //     () => {
-            //       return that.rangPoints;
-            //     },
-            //     false
-            //   ); // 更新线条的位置
-            // } else {
-            //   rangLineEntity = viewer.entities.add(
-            //     that.drawLine(`yh_rang_line`, that.rangPoints, Cesium.Color.RED)
-            //   );
-            //   rangLineMoveEntity = viewer.entities.add(
-            //     that.drawLine(
-            //       `yh_rang_line_moving`,
-            //       that.rangMovePoints,
-            //       Cesium.Color.RED
-            //     )
-            //   );
-            // }
-            Rang.circleEntityArr.push(
-              viewer.entities.add(
-                Rang.drawPointRang(
-                  `yh_rang${Rang.currentNum}_point${Rang.circleEntityArr
-                    .length - 1}`,
-                  position,
-                  Rang.pointsDataArr.length - 1 == 0
-                    ? ""
-                    : num.toFixed(4) + "米",
-                  Rang.pointsDataArr.length - 1 == 0
-                    ? "static/map_start.png"
-                    : "static/map_center.png"
+              // 超过两个点可以开始计算距离了
+              if (that.rangData.pointsDataArr.length > 1) {
+                const prePoint =
+                  that.rangData.pointsDataArr[
+                    that.rangData.pointsDataArr.length - 2
+                  ];
+                const curPoint =
+                  that.rangData.pointsDataArr[
+                    that.rangData.pointsDataArr.length - 1
+                  ];
+                that.rangData.rangNum += Rang.handleLineNum(curPoint, prePoint);
+              }
+              that.rangData.circleEntityArr.push(
+                viewer.entities.add(
+                  Rang.drawPointRang(
+                    `yh_rang_point_${that.rangData.currentNum}_${that.rangData.circleEntityArr.length}`,
+                    position,
+                    that.rangData.pointsDataArr.length - 1 == 0
+                      ? "起点"
+                      : that.rangData.rangNum.toFixed(4) + "米",
+                    that.rangData.currentNum,
+                    that.rangData.pointsDataArr.length - 1
+                  )
                 )
-              )
-            );
-            // that.circleRangArr.push(
-            //   viewer.entities.add(
-            //     that.drawPointRang(
-            //       `yh_rang_point${that.rangPoints.length - 1}`,
-            //       position,
-            //       that.rangPoints.length - 1 == 0 ? "" : num.toFixed(4) + "米",
-            //       that.rangPoints.length - 1 == 0
-            //         ? "static/map_start.png"
-            //         : "static/map_center.png"
-            //     )
-            //   )
-            // );
+              );
+              if (that.rangData.lineEntity) {
+                that.rangData.lineEntity.positions = Rang.updatePoints(
+                  that.rangData.pointsDataArr
+                ); // 更新线条的位置
+              } else {
+                that.rangData.lineEntity = viewer.entities.add(
+                  Rang.drawLine(
+                    `yh_rang_line${that.rangData.currentNum}`,
+                    that.rangData.pointsDataArr,
+                    that.rangData.currentNum
+                  )
+                );
+              }
+              that.rangData.mapIconArr.push(
+                viewer.entities.add(
+                  Rang.drawMapIcon(
+                    `yh_rang_map_${that.rangData.currentNum}_${that.rangData.circleEntityArr.length}`,
+                    position,
+                    that.rangData.currentNum,
+                    that.rangData.pointsDataArr.length - 1,
+                    that.rangData.pointsDataArr.length - 1 == 0
+                      ? "static/map_start.png"
+                      : "static/map_center.png"
+                  )
+                )
+              );
+
+              that.rangData.delIconArr.push(
+                viewer.entities.add(
+                  Rang.drawDelIcon(
+                    `yh_rang_del_${that.rangData.currentNum}_${that.rangData.circleEntityArr.length}`,
+                    position,
+                    that.rangData.currentNum,
+                    that.rangData.pointsDataArr.length - 1
+                  )
+                )
+              );
+            }
+            return;
           }
-          return;
-        }
-        that.dragFlag = false;
-        let pickedFeature = viewer.scene.pick(event.position);
-        if (!Cesium.defined(pickedFeature)) return;
-        let property;
-        if (pickedFeature.id.typeName == "selectData") {
-          property = pickedFeature.id.info;
-          that.setPolyLineStyle(property, false);
-        } else {
-          property = JSON.parse(pickedFeature.id);
-          if (property.typeName == "point") {
-            //点击的是点
-            that.updatePointColor(property.index);
-            that.$emit("viewCard", property.point);
-          } else if (property.typeName == "segm") {
-            that.$bus.$emit("polyData", property);
+
+          that.dragFlag = false;
+          let pickedFeature = viewer.scene.pick(event.position);
+          if (!Cesium.defined(pickedFeature)) return;
+          if (
+            that.rangChecked == "null" &&
+            pickedFeature.id.typeName &&
+            pickedFeature.id.typeName.includes("yh_")
+          ) {
+            if (pickedFeature.id.typeName == "yh_rang_del_icon") {
+              let lineIndex = pickedFeature.id.lineIndex,
+                pointIndex = pickedFeature.id.pointIndex;
+
+              if (
+                pointIndex == 0 ||
+                pointIndex == that.rangData.pointsDataArrs[lineIndex].length - 1
+              ) {
+                that.rangData.pointsDataArrs[lineIndex] = [];
+                viewer.entities.remove(that.rangData.lineEntityArrs[lineIndex]);
+                that.rangData.lineEntityArrs[lineIndex] = null;
+                that.rangData.delIconArrs[lineIndex].forEach(item => {
+                  viewer.entities.remove(item);
+                });
+                that.rangData.delIconArrs[lineIndex] = [];
+                that.rangData.mapIconArrs[lineIndex].forEach(item => {
+                  viewer.entities.remove(item);
+                });
+                that.rangData.mapIconArrs[lineIndex] = [];
+                that.rangData.circleEntityArrs[lineIndex].forEach(item => {
+                  viewer.entities.remove(item);
+                });
+                that.rangData.circleEntityArrs[lineIndex] = [];
+                console.log(that.rangData, "that.rangData");
+              } else {
+                viewer.entities.remove(
+                  that.rangData.delIconArrs[lineIndex][pointIndex]
+                );
+                that.rangData.delIconArrs[lineIndex].splice(pointIndex, 1);
+                viewer.entities.remove(
+                  that.rangData.mapIconArrs[lineIndex][pointIndex]
+                );
+                that.rangData.mapIconArrs[lineIndex].splice(pointIndex, 1);
+                viewer.entities.remove(
+                  that.rangData.circleEntityArrs[lineIndex][pointIndex]
+                );
+                that.rangData.circleEntityArrs[lineIndex].splice(pointIndex, 1);
+                that.rangData.pointsDataArrs[lineIndex].splice(pointIndex, 1);
+                let num = 0,
+                  arr = that.rangData.pointsDataArrs[lineIndex];
+                for (let i = 1; i < arr.length; i++) {
+                  num += Rang.handleLineNum(arr[i - 1], arr[i]);
+                  if (i >= pointIndex) {
+                    if (i < arr.length - 1) {
+                      that.rangData.circleEntityArrs[lineIndex][
+                        i
+                      ].label.text = `${num.toFixed(4)}米`;
+                    } else {
+                      that.rangData.circleEntityArrs[lineIndex][
+                        i
+                      ].label.text = `总长：${num.toFixed(4)}米`;
+                    }
+                    that.rangData.circleEntityArrs[lineIndex][i].pointIndex = i;
+                    that.rangData.mapIconArrs[lineIndex][i].pointIndex = i;
+                    that.rangData.delIconArrs[lineIndex][i].pointIndex = i;
+                  }
+                }
+                that.rangData.lineEntityArrs[
+                  lineIndex
+                ].positions = Rang.updatePoints(
+                  that.rangData.pointsDataArrs[lineIndex]
+                );
+              }
+            }
+            if (
+              pickedFeature.id.typeName == "yh_rang_map_icon" ||
+              pickedFeature.id.typeName == "yh_rang_circle_icon"
+            ) {
+              return;
+            }
+          }
+
+          let property;
+          if (pickedFeature.id.typeName == "selectData") {
+            property = pickedFeature.id.info;
             that.setPolyLineStyle(property, false);
           } else {
-            that.selectProperty = property;
-            that.setPolyLineStyle(property, false);
+            property = JSON.parse(pickedFeature.id);
+            if (property.typeName == "point") {
+              //点击的是点
+              that.updatePointColor(property.index);
+              that.$emit("viewCard", property.point);
+            } else if (property.typeName == "segm") {
+              that.$bus.$emit("polyData", property);
+              that.setPolyLineStyle(property, false);
+            } else {
+              that.selectProperty = property;
+              that.setPolyLineStyle(property, false);
+            }
           }
-        }
-        if (property && property.typeName.includes("YH")) {
-          that.drawPoint(property);
+          if (property && property.typeName.includes("YH")) {
+            that.drawPoint(property);
+          }
+        } catch (err) {
+          console.log(err, "err--鼠标左击事件");
         }
       }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
       //鼠标按下事件
       handler.setInputAction(function(event) {
-        if (that.rangChecked != "null") return;
-        let pickedFeature = viewer.scene.pick(event.position);
-        if (!Cesium.defined(pickedFeature)) return;
-        if (pickedFeature.id.typeName == "selectData") {
-          return;
-        }
-        let property = JSON.parse(pickedFeature.id);
-        if (property.typeName == "point") {
-          //点击的是点
-          that.updatePointColor(property.index);
+        try {
+          if (that.rangChecked != "null") return;
+          let pickedFeature = viewer.scene.pick(event.position);
+          if (!Cesium.defined(pickedFeature)) return;
+          if (
+            that.rangChecked == "null" &&
+            pickedFeature.id &&
+            (pickedFeature.id.typeName == "yh_rang_map_icon" ||
+              pickedFeature.id.typeName == "yh_rang_circle_icon" ||
+              pickedFeature.id.typeName == "yh_rang_del_icon")
+          ) {
+            return;
+          }
+          if (pickedFeature.id.typeName == "selectData") {
+            return;
+          }
+          let property = JSON.parse(pickedFeature.id);
+          if (property.typeName == "point") {
+            //点击的是点
+            that.updatePointColor(property.index);
 
-          let cartesian = viewer.scene.pickPosition(event.position);
-          let cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-          that.lon = Number(
-            Cesium.Math.toDegrees(cartographic.longitude).toFixed(7)
-          );
-          that.lat = Number(
-            Cesium.Math.toDegrees(cartographic.latitude).toFixed(7)
-          );
-          that.dragFlag = true;
-          viewer.scene.screenSpaceCameraController.enableRotate = false; //锁定相机
+            let cartesian = viewer.scene.pickPosition(event.position);
+            let cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+            that.lon = Number(
+              Cesium.Math.toDegrees(cartographic.longitude).toFixed(7)
+            );
+            that.lat = Number(
+              Cesium.Math.toDegrees(cartographic.latitude).toFixed(7)
+            );
+            that.dragFlag = true;
+            viewer.scene.screenSpaceCameraController.enableRotate = false; //锁定相机
+          }
+        } catch (err) {
+          console.log(err, "err--鼠标按下事件");
         }
       }, Cesium.ScreenSpaceEventType.LEFT_DOWN);
       //鼠标滑轮事件
       handler.setInputAction(function(event) {
         let cameraHeight = viewer.camera.positionCartographic.height;
-        console.log(cameraHeight, "cameraHeight");
-
         if (cameraHeight > 1000) {
           that.cameraHeight = 1000;
         } else {
@@ -1087,15 +1254,10 @@ export default {
       handler.setInputAction(function(event) {
         if (that.rangChecked != "null") {
           that.rangChecked = "null";
-          Rang.endRang();
-          // viewer.scene.primitives.remove(rangLineMoveEntity);
-          // viewer.entities.remove(that.circleRang);
-          // that.circleRang = null;
-          // that.rangMovePoints = [];
+          that.overRang();
           return;
         }
         let pickedFeature = viewer.scene.pick(event.position);
-        // console.log(pickedFeature, 'pickedFeature');
         if (!Cesium.defined(pickedFeature)) return;
         let property;
         if (pickedFeature.id.typeName == "selectData") {
@@ -1106,67 +1268,44 @@ export default {
             property = property.polyInfo;
           }
         }
+        // console.log(property, "property");
+
         that.$bus.$emit("isViewInfo", property);
       }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
       //鼠标移动事件
       handler.setInputAction(function(event) {
         try {
           if (that.rangChecked != "null") {
-            const position = viewer.camera.pickEllipsoid(
-              event.endPosition,
-              viewer.scene.globe.ellipsoid
-            );
-            if (position && Rang.lineMovingEntity) {
-              Rang.lineMovingData = [Rang.lineMovingData[0], position];
-              Rang.lineMovingEntity.polyline.positions = new Cesium.CallbackProperty(
-                () => {
-                  return Rang.lineMovingData;
-                },
-                false
+            const position = that.getPosition(event.endPosition);
+            if (position && that.rangData.lineMovingEntity) {
+              that.rangData.lineMovingData = [
+                that.rangData.lineMovingData[0],
+                position
+              ];
+              that.rangData.lineMovingEntity.polyline.positions = Rang.updatePoints(
+                that.rangData.lineMovingData
               );
-              Rang.textMovingEntity.label.text = `距离上一个点${Rang.handleLineNum(
-                Rang.lineMovingData[0],
-                position,
-                "moving"
+
+              that.rangData.textMovingEntity.label.text = `距离上一个点${Rang.handleLineNum(
+                that.rangData.lineMovingData[0],
+                position
               ).toFixed(4)}米`;
-              Rang.textMovingEntity.position = new Cesium.CallbackProperty(
-                () => {
-                  return position;
-                },
-                false
+              that.rangData.textMovingEntity.position = Rang.updatePoints(
+                position
               );
             }
-
-            // if (position && rangLineMoveEntity) {
-            //   that.rangMovePoints = [that.rangMovePoints[0], position];
-            //   rangLineMoveEntity.polyline.positions = new Cesium.CallbackProperty(
-            //     () => {
-            //       return that.rangMovePoints;
-            //     },
-            //     false
-            //   );
-            //   that.circleRang.label.text = `距离上一个点${that
-            //     .handleLineNum(that.rangMovePoints[0], position, "moving")
-            //     .toFixed(4)}米`;
-            //   that.circleRang.position = new Cesium.CallbackProperty(() => {
-            //     return position;
-            //   }, false);
-            // }
             return;
           }
           let pickedObject = viewer.scene.pick(event.endPosition);
+
           if (!Cesium.defined(pickedObject)) {
             viewer._container.style.cursor = "default";
             return;
           } else {
             viewer._container.style.cursor = "pointer";
-            // 判断鼠标是否在测距线和点上，如果在则return出去，以免报错
-            if (
-              pickedObject.id._id &&
-              (pickedObject.id._id.includes("yh_rang_point") ||
-                pickedObject.id._id.includes("yh_rang_line"))
-            )
-              return;
+          }
+          if (pickedObject.id && pickedObject.id.lineIndex > -1) {
+            return;
           }
           if (pickedObject.id.typeName == "selectData") {
           } else {
@@ -1191,7 +1330,7 @@ export default {
             }
           }
         } catch (err) {
-          console.log(err, "err---鼠标移动事件");
+          console.log(err, "err-------鼠标移动事件");
         }
       }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
       //鼠标抬起事件
@@ -1206,84 +1345,6 @@ export default {
         }
       }, Cesium.ScreenSpaceEventType.LEFT_UP);
     },
-    // 测距
-    handleLineNum(curPoint, prePoint, sign = "stop") {
-      const distance = Cesium.Cartesian3.distance(prePoint, curPoint);
-      // 如果在移动过程中返回当前的距离
-      if (sign == "moving") {
-        return distance;
-      } else {
-        this.rangNum += distance;
-        return this.rangNum;
-      }
-    },
-    // 绘制线
-    drawLine(id, points, color) {
-      return {
-        id: id,
-        polyline: {
-          positions: new Cesium.CallbackProperty(() => {
-            return points;
-          }, false),
-          material: color,
-          width: 2
-        }
-      };
-    },
-    // 绘制点
-    drawPointRang(id, point, text, icon = "static/close.png") {
-      return {
-        id: id,
-        position: point,
-        point: {
-          pixelSize: 0,
-          color: Cesium.Color.YELLOW
-        },
-        label: {
-          text: text,
-          font: "normal 18px SimHei",
-          fillColor: Cesium.Color.DODGERBLUE,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 2,
-          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-          pixelOffset: new Cesium.Cartesian2(26, -8),
-          showBackground: true,
-          backgroundColor: Cesium.Color.FLORALWHITE,
-          backgroundRadius: 0
-        },
-        billboard: {
-          image: icon, // 图标的路径
-          width: 30,
-          height: 30,
-          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-          pixelOffset: new Cesium.Cartesian2(-12, -6),
-          showBackground: true,
-          backgroundColor: Cesium.Color.FLORALWHITE
-        }
-      };
-    },
-    drawTextRang(point, text) {
-      return {
-        id: "yh_rang_moving_text",
-        position: point,
-        label: {
-          text: text,
-          font: "14px Helvetica",
-          fillColor: Cesium.Color.BLACK,
-          outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 2,
-          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-          horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-          pixelOffset: new Cesium.Cartesian2(0, -10),
-          showBackground: true,
-          backgroundColor: Cesium.Color.FLORALWHITE
-        }
-      };
-    },
-    // 删除测距数据
-    delRang() {},
 
     //更新点的颜色
     updatePointColor(index) {
@@ -1298,6 +1359,8 @@ export default {
 
     //绘制选中的点
     drawPoint(property) {
+      console.log(property, "property---drawPoint");
+
       // 销毁点
       if (pointsDataSource) {
         pointsDataSource.removeAll();
